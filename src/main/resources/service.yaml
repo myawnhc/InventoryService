@@ -1,0 +1,9 @@
+# inventory-java
+---
+service_name: inventory-service
+grpc_hostname: localhost
+grpc_port: 50053
+hz_mode: embedded
+hz_client_config: hazelcast-client.hzce.yaml
+# invdb for local/docker/k8s, IP or resolvable DNS name for HZCE
+database_host: invdb
