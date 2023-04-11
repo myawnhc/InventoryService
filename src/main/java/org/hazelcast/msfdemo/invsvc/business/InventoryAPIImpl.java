@@ -20,9 +20,7 @@ package org.hazelcast.msfdemo.invsvc.business;
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import org.hazelcast.eventsourcing.EventSourcingController;
-import org.hazelcast.eventsourcing.event.PartitionedSequenceKey;
 import org.hazelcast.eventsourcing.sync.CompletionInfo;
-import org.hazelcast.eventsourcing.sync.EventCompletionHandler;
 import org.hazelcast.msfdemo.invsvc.domain.Inventory;
 import org.hazelcast.msfdemo.invsvc.domain.InventoryKey;
 import org.hazelcast.msfdemo.invsvc.domain.Item;
@@ -34,6 +32,9 @@ import org.hazelcast.msfdemo.invsvc.service.InventoryService;
 import org.hazelcast.msfdemo.invsvc.views.InventoryDAO;
 import org.hazelcast.msfdemo.invsvc.views.ItemDAO;
 
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.logging.Logger;
 
 import static org.hazelcast.msfdemo.invsvc.events.InventoryOuterClass.*;
@@ -46,10 +47,6 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
 
     private InventoryService inventoryService;
     private EventSourcingController<Inventory,InventoryKey, InventoryEvent> eventSourcingController;
-    //private final IMap<String, APIBufferPair> bufferPairsForAPI;
-//    APIBufferPair<OpenAccountRequest,OpenAccountResponse> openHandler;
-//    APIBufferPair<AdjustBalanceRequest,AdjustBalanceResponse> balanceAdjustHandler;
-
 
     private int unacknowledgedAddInventoryRequests = 0;
     private int airBatchSize = 1000;
@@ -59,9 +56,6 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         this.eventSourcingController = service.getEventSourcingController();
         String serviceName = bindService().getServiceDescriptor().getName();
         logger.info("AccountAPIImpl initializing structures for " + serviceName);
-        // If we're not implementing pipelines we don't need buffer pairs ...
-        //bufferPairsForAPI = hazelcast.getMap(serviceName+"_APIS");
-        // TODO: init buffer pairs for each API
         inventoryDAO = new InventoryDAO(service.getHazelcastInstance());
         itemDAO = new ItemDAO(service.getHazelcastInstance());
     }
@@ -159,7 +153,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         String location = request.getLocation();
         int quantity = request.getQuantity();
         int duration = request.getDurationMinutes(); // NOT CURRENTLY USING
-        System.out.println("Reserve request " + itemNumber + " " + location + " " + quantity);
+        //System.out.println("Reserve request " + itemNumber + " " + location + " " + quantity);
 
         // Get ATP from DAO, if not available we fail fast
         InventoryKey invKey = new InventoryKey(itemNumber, location);
@@ -189,50 +183,37 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
 
         // Create Event object
         ReserveInventoryEvent event = new ReserveInventoryEvent(invKey, request.getQuantity());
-        System.out.println("ReserveInventoryEvent has key " + event.getKey());
-        PartitionedSequenceKey eventKey = null;
+        //System.out.println("ReserveInventoryEvent has key " + event.getKey());
+
+        // Pass UUID to differentiate multiple in-flight requests
+        UUID identifier = UUID.randomUUID();
+        Future<CompletionInfo> future = eventSourcingController.handleEvent(event, identifier);
 
         try {
-            eventKey = eventSourcingController.handleEvent(event);
-        } catch (Exception e) {
-            e.printStackTrace();
-//            ReserveResponse fail = ReserveResponse.newBuilder()
-//                    .setSuccess(false)
-//                    .setReason(e.getLocalizedMessage())
-//                    .build();
-            responseObserver.onError(e);
-            responseObserver.onCompleted();
-            return;
-        }
-
-        // TODO: potential race condition here .. pipeline might complete before we get our observer
-        //  registered.
-        inventoryService.registerObserver(eventKey, (partitionedSequenceKey, inventoryEvent, completionInfo) -> {
-            if (completionInfo.status == CompletionInfo.Status.COMPLETED_OK) {
-                // Respond to caller
+            CompletionInfo completion = future.get();
+            if (completion.status == CompletionInfo.Status.COMPLETED_OK) {
                 ReserveResponse success = ReserveResponse.newBuilder()
                         .setSuccess(true).build();
                 responseObserver.onNext(success);
                 responseObserver.onCompleted();
-            } else if (completionInfo.status == CompletionInfo.Status.HAD_ERROR) {
-//                ReserveResponse fail = ReserveResponse.newBuilder()
-//                        .setSuccess(false)
-//                        .setReason((completionInfo.error.getLocalizedMessage()))
-//                        .build();
-                responseObserver.onError(completionInfo.error);
+            } else if (completion.status == CompletionInfo.Status.HAD_ERROR) {
+                responseObserver.onError(completion.error);
                 responseObserver.onCompleted();
             }
             // TODO: not handling timed out because feature not implemented yet
-        });
+        } catch (InterruptedException | ExecutionException e) {
+            responseObserver.onError(e);
+            responseObserver.onCompleted();
+            return;
+        }
     }
 
-    // TODO: completion handling not implemented, waiting for it to fully test out in reserve
     @Override
     public void pull(PullRequest request, StreamObserver<PullResponse> responseObserver) {
         String itemNumber = request.getItemNumber();
         String location = request.getLocation();
         int quantity = request.getQuantity();
-        System.out.println("Pull request " + itemNumber + " " + location + " " + quantity);
+        //System.out.println("Pull request " + itemNumber + " " + location + " " + quantity);
 
         // Get ATP from DAO, if not available we fail fast
         InventoryKey invKey = new InventoryKey(itemNumber, location);
@@ -248,7 +229,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         }
 
         if (inv.getAvailableToPromise() + inv.getQuantityReserved() < request.getQuantity() ) {
-            System.out.printf("Insufficient ATP %d %d %d\n", inv.getQuantityOnHand(), inv.getQuantityReserved(), inv.getAvailableToPromise());
+            System.out.printf("Insufficient ATP + Reserved %d %d %d\n", inv.getQuantityOnHand(), inv.getQuantityReserved(), inv.getAvailableToPromise());
             PullResponse shortage = PullResponse.newBuilder()
                     .setSuccess(false)
                     .setReason(("Insufficient quantity available"))
@@ -258,33 +239,32 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
             return;
         }
 
-        System.out.println("Pull success, updating event store and view");
+        //System.out.println("Pull success, updating event store and view");
 
         // Create Event object
         PullInventoryEvent event = new PullInventoryEvent(invKey, request.getQuantity());
-        PartitionedSequenceKey eventKey = null;
+
+        // Can optionally pass UUID if we have multiple in-flight requests to differentiate
+        UUID identifier = UUID.randomUUID();
+        Future<CompletionInfo> future = eventSourcingController.handleEvent(event, identifier);
 
         try {
-            eventKey = eventSourcingController.handleEvent(event);
-        } catch (Exception e) {
-            e.printStackTrace();
-            responseObserver.onError(e);
-            responseObserver.onCompleted();
-            return;
-        }
-
-        inventoryService.registerObserver(eventKey, (partitionedSequenceKey, inventoryEvent, completionInfo) -> {
-            if (completionInfo.status == CompletionInfo.Status.COMPLETED_OK) {
-                // Respond to caller
+            CompletionInfo completion = future.get();
+            if (completion.status == CompletionInfo.Status.COMPLETED_OK) {
                 PullResponse success = PullResponse.newBuilder()
                         .setSuccess(true).build();
                 responseObserver.onNext(success);
                 responseObserver.onCompleted();
-            } else if (completionInfo.status == CompletionInfo.Status.HAD_ERROR) {
-                responseObserver.onError(completionInfo.error);
+            } else if (completion.status == CompletionInfo.Status.HAD_ERROR) {
+                responseObserver.onError(completion.error);
                 responseObserver.onCompleted();
             }
-        });
+            // TODO: not handling timed out because feature not implemented yet
+        } catch (InterruptedException | ExecutionException e) {
+            responseObserver.onError(e);
+            responseObserver.onCompleted();
+            return;
+        }
     }
 
     @Override
@@ -312,6 +292,20 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         // Request is empty so ignore it
         InventoryCountResponse response = InventoryCountResponse.newBuilder()
                 .setCount(inventoryDAO.getInventoryRecordCount())
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void priceLookup(PriceLookupRequest request, StreamObserver<PriceLookupResponse> responseObserver) {
+        int priceInCents = -1; // will use to indicate item not found
+        Item item = itemDAO.findByKey(request.getItemNumber());
+        System.out.println("InventoryAPIImpl.priceLookup for :" + request.getItemNumber() + " finds item:" + item);
+        if (item != null)
+            priceInCents = item.getPrice();
+        PriceLookupResponse response = PriceLookupResponse.newBuilder()
+                .setPrice(priceInCents)
                 .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
