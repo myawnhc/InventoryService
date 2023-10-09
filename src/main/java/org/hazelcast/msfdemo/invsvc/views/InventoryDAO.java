@@ -18,6 +18,7 @@ package org.hazelcast.msfdemo.invsvc.views;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
 import com.hazelcast.spi.exception.RetryableHazelcastException;
 import org.hazelcast.msfdemo.invsvc.domain.Inventory;
 import org.hazelcast.msfdemo.invsvc.domain.InventoryKey;
@@ -25,24 +26,37 @@ import org.hazelcast.msfdemo.invsvc.domain.InventoryKey;
 public class InventoryDAO {
 
     private HazelcastInstance hazelcast;
-    private IMap<InventoryKey,Inventory> inventoryMap;
+    private IMap<GenericRecord,GenericRecord> inventoryMap;
 
     private final String CREATE_MAPPING  =
             """
-            CREATE MAPPING IF NOT EXISTS inventory_VIEW
-            TYPE IMap
-            Options (
-                'keyFormat' = 'java',
-                'keyJavaClass' = 'org.hazelcast.msfdemo.invsvc.domain.InventoryKey',
-                'valueFormat' = 'java',
-                'valueJavaClass' = 'org.hazelcast.msfdemo.invsvc.domain.Inventory'
-            )
-            """;
+                    CREATE MAPPING IF NOT EXISTS inventory_VIEW (
+                        itemNumber          VARCHAR,
+                        description         VARCHAR,
+                        location            VARCHAR,
+                        locationType        VARCHAR,
+                        geohash             VARCHAR,
+                        quantityOnHand      INTEGER,
+                        quantityReserved    INTEGER,
+                        availableToPromise  INTEGER
+                    )
+                    TYPE IMap
+                    Options (
+                        'keyFormat' = 'compact',
+                        'keyCompactTypeName' = 'InventoryService.inventoryKey',
+                        'valueFormat' = 'compact',
+                        'valueCompactTypeName' = 'InventoryService.inventory'
+                    )
+                    """;
 
     public InventoryDAO(HazelcastInstance hz) {
         this.hazelcast = hz;
         inventoryMap = hz.getMap("inventory_VIEW");
-        hazelcast.getSql().execute(CREATE_MAPPING);
+        try {
+            hazelcast.getSql().execute(CREATE_MAPPING);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     // Non-inheritable query methods
@@ -65,11 +79,18 @@ public class InventoryDAO {
     }
 
     public Inventory findByKey(InventoryKey key) {
-        return inventoryMap.get(key);
+        GenericRecord keyGr = key.toGenericRecord();
+        GenericRecord valueGR = inventoryMap.get(keyGr);
+        if (valueGR == null) {
+            System.out.println("InventoryDAO.findByKey: No inventory record found for key " + key);
+            return null;
+        }
+        return new Inventory(valueGR);
+        //return new Inventory(inventoryMap.get(key.toGenericRecord()));
     }
 
     public void insert(InventoryKey key, Inventory value) {
-        inventoryMap.put(key, value);
+        inventoryMap.put(key.toGenericRecord(), value.toGenericRecord());
     }
 
 }

@@ -16,15 +16,31 @@
 
 package org.hazelcast.msfdemo.invsvc.domain;
 
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
+import org.hazelcast.eventsourcing.event.GenericRecordSupport;
+
 import java.io.Serializable;
 
-public class InventoryKey implements Serializable, Comparable<InventoryKey> {
+// When stored in as key to materialized view, will be stored as a GenericRecord in
+// compact format; but needs to be Java Serializable when used as part of the
+// PartitionedSequenceKey of the EventStore
+
+public class InventoryKey implements Comparable<InventoryKey>, GenericRecordSupport, Serializable {
+    public static final String ITEM_NUMBER = "itemNumber";
+    public static final String LOCATION_ID = "locationID";
+
     public String itemNumber;
     public String locationID;
 
     public InventoryKey(String item, String loc) {
         this.itemNumber = item;
         this.locationID = loc;
+    }
+
+    public InventoryKey(GenericRecord data) {
+        this.itemNumber = data.getString(ITEM_NUMBER);
+        this.locationID = data.getString(LOCATION_ID);
     }
 
     @Override
@@ -57,5 +73,13 @@ public class InventoryKey implements Serializable, Comparable<InventoryKey> {
     @Override
     public int hashCode() {
         return itemNumber.hashCode() + locationID.hashCode();
+    }
+
+    public GenericRecord toGenericRecord() {
+        GenericRecord gr = GenericRecordBuilder.compact("InventoryService.inventoryKey")
+                .setString(ITEM_NUMBER, itemNumber)
+                .setString(LOCATION_ID, locationID)
+                .build();
+        return gr;
     }
 }

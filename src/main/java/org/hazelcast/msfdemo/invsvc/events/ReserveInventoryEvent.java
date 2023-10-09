@@ -13,47 +13,81 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-
 package org.hazelcast.msfdemo.invsvc.events;
 
-import com.hazelcast.core.HazelcastJsonValue;
-import com.hazelcast.org.json.JSONObject;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
 import com.hazelcast.sql.SqlRow;
 import org.hazelcast.msfdemo.invsvc.domain.Inventory;
 import org.hazelcast.msfdemo.invsvc.domain.InventoryKey;
 
-import java.io.Serializable;
+public class ReserveInventoryEvent extends InventoryEvent {
 
-// TODO: will make Compact Serializable
-public class ReserveInventoryEvent extends InventoryEvent implements Serializable {
-//    private String orderNumber = "[not provided]";
-//    private String locationID;
-//    private int quantity;
+    public static final String QUAL_EVENT_NAME = "InventoryService.ReserveInventoryEvent";
+    public static final String INVENTORY_KEY = "key";
+    public static final String ITEM_NUMBER = "itemNumber";
+    public static final String LOCATION = "location";
+    public static final String QUANTITY = "quantity";
+
+    //private InventoryKey key; // declared on SourcedEvent
+    private String itemNumber;
+    private String location;
+    private int quantity;
 
     public ReserveInventoryEvent(InventoryKey key, int qty) {
-        this.key = key;
-        this.eventClass = ReserveInventoryEvent.class.getCanonicalName();
-        JSONObject jobj = new JSONObject();
-        jobj.put("itemNumber", key.itemNumber);
-        jobj.put("location", key.locationID);
-        jobj.put("quantity", qty);
-        setPayload(new HazelcastJsonValue(jobj.toString()));
+        setEventName(QUAL_EVENT_NAME);
+        super.key = key;
+        this.itemNumber = key.itemNumber;
+        this.location = key.locationID;
+        this.quantity = qty;
     }
 
+    public ReserveInventoryEvent(GenericRecord data) {
+        setEventName(QUAL_EVENT_NAME);
+        this.itemNumber = data.getString(ITEM_NUMBER);
+        this.location = data.getString(LOCATION);
+        // 2 ways to go here, GR has key components as well as key in GR form
+        super.key = new InventoryKey(itemNumber, location);
+        this.quantity = data.getInt32(QUANTITY);
+        Long time = data.getInt64(EVENT_TIME);
+        if (time != null)
+            setTimestamp(time);
+    }
+
+
     public ReserveInventoryEvent(SqlRow row) {
-        this.key = row.getObject("key");
-        eventClass = ReserveInventoryEvent.class.getCanonicalName();
-        HazelcastJsonValue payload = row.getObject("payload");
-        setPayload(payload);
-        setTimestamp(row.getObject("timestamp"));
+        setEventName(QUAL_EVENT_NAME);
+        InventoryKey key = row.getObject("doKey");
+        super.key = key;
+        this.itemNumber = key.itemNumber; // also in value
+        this.location = key.locationID; // also in value
+        this.quantity = row.getObject(QUANTITY);
+        Long time = row.getObject(EVENT_TIME);
+        if (time != null)
+            setTimestamp(time);
     }
 
     @Override
     public Inventory apply(Inventory inventory) {
-        JSONObject jobj = new JSONObject(payload.getValue());
+        if (inventory == null) {
+            throw new IllegalArgumentException("Cannot apply event: Null inventory item");
+        }
         inventory.setItemNumber(key.itemNumber);
         inventory.setLocation(key.locationID);
-        inventory.setQuantityReserved(inventory.getQuantityReserved() + jobj.getInt("quantity"));
+        inventory.setQuantityReserved(inventory.getQuantityReserved() + quantity);
         return inventory;
+    }
+
+    @Override
+    public GenericRecord toGenericRecord() {
+        GenericRecord gr = GenericRecordBuilder.compact(getEventName())
+                .setString(EVENT_NAME, QUAL_EVENT_NAME)
+                .setInt64(EVENT_TIME, timestamp)
+                .setGenericRecord(INVENTORY_KEY, super.key.toGenericRecord())
+                .setString(ITEM_NUMBER, itemNumber)
+                .setString(LOCATION, location)
+                .setInt32(QUANTITY, quantity)
+                .build();
+        return gr;
     }
 }

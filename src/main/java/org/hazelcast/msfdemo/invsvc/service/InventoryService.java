@@ -25,10 +25,9 @@ import org.hazelcast.eventsourcing.EventSourcingController;
 import org.hazelcast.msfdemo.invsvc.business.InventoryAPIImpl;
 import org.hazelcast.msfdemo.invsvc.config.ServiceConfig;
 import org.hazelcast.msfdemo.invsvc.domain.Inventory;
+import org.hazelcast.msfdemo.invsvc.domain.InventoryHydrationFactory;
 import org.hazelcast.msfdemo.invsvc.domain.InventoryKey;
 import org.hazelcast.msfdemo.invsvc.events.InventoryEvent;
-import org.hazelcast.msfdemo.invsvc.events.PullInventoryEventSerializer;
-import org.hazelcast.msfdemo.invsvc.events.ReserveInventoryEventSerializer;
 
 import java.io.IOException;
 
@@ -51,10 +50,10 @@ public class InventoryService {
             config.getNetworkConfig().setPort(5721);
             config.getJetConfig().setEnabled(true);
             config.getMapConfig("inventory_PENDING").getEventJournalConfig().setEnabled(true);
-            config.getSerializationConfig().getCompactSerializationConfig()
-                    .addSerializer(new ReserveInventoryEventSerializer())
-                    .addSerializer(new PullInventoryEventSerializer());
-            config = EventSourcingController.addRequiredConfigItems(config);
+//            config.getSerializationConfig().getCompactSerializationConfig()
+//                    .addSerializer(new ReserveInventoryEventSerializer())
+//                    .addSerializer(new PullInventoryEventSerializer());
+            //config = EventSourcingController.addRequiredConfigItems(config);
             hazelcast = Hazelcast.newHazelcastInstance(config);
         } else {
             throw new IllegalArgumentException("Not set up to handle client-server yet");
@@ -65,7 +64,9 @@ public class InventoryService {
 
     private void initEventSourcingController(HazelcastInstance hazelcast) {
         eventSourcingController = EventSourcingController
-                .<Inventory, InventoryKey, InventoryEvent>newBuilder(hazelcast, "inventory").build();
+                .<Inventory, InventoryKey, InventoryEvent>newBuilder(hazelcast, "inventory")
+                .hydrationFactory(new InventoryHydrationFactory())
+                .build();
     }
 
     public EventSourcingController<Inventory, InventoryKey, InventoryEvent> getEventSourcingController() {

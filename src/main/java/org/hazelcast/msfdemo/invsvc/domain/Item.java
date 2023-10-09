@@ -16,10 +16,12 @@
 
 package org.hazelcast.msfdemo.invsvc.domain;
 
-
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
 import org.hazelcast.eventsourcing.event.DomainObject;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 
 public class Item implements DomainObject<String>, Serializable {
     // From ITEM table
@@ -79,5 +81,17 @@ public class Item implements DomainObject<String>, Serializable {
     @Override
     public String getKey() {
         return itemNumber;
+    }
+
+    @Override
+    public GenericRecord toGenericRecord() {
+        GenericRecord gr = GenericRecordBuilder.compact("InventoryService.item")
+                .setString("key", itemNumber)
+                .setString("description", description)
+                .setString("categoryID", categoryID)
+                .setString("categoryName", categoryName)
+                .setDecimal("price", BigDecimal.valueOf(price)) // TODO: may need decimal shift
+                .build();
+        return gr;
     }
 }

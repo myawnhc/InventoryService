@@ -13,9 +13,7 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-
 package org.hazelcast.msfdemo.invsvc.business;
-
 
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
@@ -33,6 +31,7 @@ import org.hazelcast.msfdemo.invsvc.views.InventoryDAO;
 import org.hazelcast.msfdemo.invsvc.views.ItemDAO;
 
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.logging.Logger;
@@ -55,7 +54,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         this.inventoryService = service;
         this.eventSourcingController = service.getEventSourcingController();
         String serviceName = bindService().getServiceDescriptor().getName();
-        logger.info("AccountAPIImpl initializing structures for " + serviceName);
+        logger.info("InventoryAPIImpl initializing structures for " + serviceName);
         inventoryDAO = new InventoryDAO(service.getHazelcastInstance());
         itemDAO = new ItemDAO(service.getHazelcastInstance());
     }
@@ -153,11 +152,17 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         String location = request.getLocation();
         int quantity = request.getQuantity();
         int duration = request.getDurationMinutes(); // NOT CURRENTLY USING
-        //System.out.println("Reserve request " + itemNumber + " " + location + " " + quantity);
+        System.out.println("Reserve request " + itemNumber + " " + location + " " + quantity);
 
         // Get ATP from DAO, if not available we fail fast
         InventoryKey invKey = new InventoryKey(itemNumber, location);
-        Inventory inv = inventoryDAO.findByKey(invKey);
+
+        Inventory inv = null;
+        try {
+            inv = inventoryDAO.findByKey(invKey);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         if (inv == null) {
             ReserveResponse nomatch = ReserveResponse.newBuilder()
                     .setSuccess(false)
@@ -165,6 +170,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
                     .build();
             responseObserver.onNext(nomatch);
             responseObserver.onCompleted();
+            System.out.println(" Reserve Request returning " + nomatch.getReason());
             return;
         }
 
@@ -176,6 +182,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
                     .build();
             responseObserver.onNext(shortage);
             responseObserver.onCompleted();
+            System.out.println(" Reserve Request returning " + shortage.getReason());
             return;
         }
 
@@ -187,10 +194,12 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
 
         // Pass UUID to differentiate multiple in-flight requests
         UUID identifier = UUID.randomUUID();
-        Future<CompletionInfo> future = eventSourcingController.handleEvent(event, identifier);
-
+        System.out.println("Submitting RIE to handleEvent");
+        CompletableFuture<CompletionInfo> future = eventSourcingController.handleEvent(event, identifier);
+        System.out.println("  Got future, wait on it");
         try {
             CompletionInfo completion = future.get();
+            System.out.println("   completion " + completion);
             if (completion.status == CompletionInfo.Status.COMPLETED_OK) {
                 ReserveResponse success = ReserveResponse.newBuilder()
                         .setSuccess(true).build();
@@ -201,7 +210,8 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
                 responseObserver.onCompleted();
             }
             // TODO: not handling timed out because feature not implemented yet
-        } catch (InterruptedException | ExecutionException e) {
+        } catch (Exception e) {
+            e.printStackTrace();
             responseObserver.onError(e);
             responseObserver.onCompleted();
             return;
@@ -213,7 +223,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
         String itemNumber = request.getItemNumber();
         String location = request.getLocation();
         int quantity = request.getQuantity();
-        //System.out.println("Pull request " + itemNumber + " " + location + " " + quantity);
+        System.out.println("Pull request " + itemNumber + " " + location + " " + quantity);
 
         // Get ATP from DAO, if not available we fail fast
         InventoryKey invKey = new InventoryKey(itemNumber, location);
@@ -239,7 +249,7 @@ public class InventoryAPIImpl extends InventoryGrpc.InventoryImplBase {
             return;
         }
 
-        //System.out.println("Pull success, updating event store and view");
+        System.out.println("Pull success, updating event store and view");
 
         // Create Event object
         PullInventoryEvent event = new PullInventoryEvent(invKey, request.getQuantity());

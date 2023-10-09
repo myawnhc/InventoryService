@@ -16,6 +16,8 @@
 
 package org.hazelcast.msfdemo.invsvc.domain;
 
+import com.hazelcast.nio.serialization.genericrecord.GenericRecord;
+import com.hazelcast.nio.serialization.genericrecord.GenericRecordBuilder;
 import org.hazelcast.eventsourcing.event.DomainObject;
 
 public class Inventory implements DomainObject<InventoryKey> {
@@ -30,6 +32,23 @@ public class Inventory implements DomainObject<InventoryKey> {
     private int    quantityOnHand;
     private int    quantityReserved;
     private int    availableToPromise;
+
+    public Inventory() {}
+
+    public Inventory(GenericRecord data) {
+        if (data == null) {
+            throw new IllegalArgumentException("Unable to create Inventory record - GenericRecord is null!");
+        }
+        this.itemNumber = data.getString("itemNumber");
+        this.description = data.getString("description");
+        this.location = data.getString("location");
+        this.locationType = data.getString("locationType");
+        this.geohash = data.getString("geohash");
+        this.quantityOnHand = data.getInt32("quantityOnHand");
+        this.quantityReserved = data.getInt32("quantityReserved");
+        this.availableToPromise = data.getInt32("availableToPromise");
+        System.out.println("Constructed from GR: " + this);
+    }
 
     @Override
     public InventoryKey getKey() { return new InventoryKey(itemNumber, location); }
@@ -100,5 +119,20 @@ public class Inventory implements DomainObject<InventoryKey> {
 
     public String toString() {
         return itemNumber + " " + location + " " + " QOH " + quantityOnHand + " RSV " + quantityReserved + " ATP " + availableToPromise;
+    }
+
+    @Override
+    public GenericRecord toGenericRecord() {
+        GenericRecord gr = GenericRecordBuilder.compact("InventoryService.inventory")
+                .setString("itemNumber", itemNumber)
+                .setString("description", description)
+                .setString("location", location)
+                .setString("locationType", locationType)
+                .setString("geohash", geohash)
+                .setInt32("quantityOnHand", quantityOnHand)
+                .setInt32("quantityReserved", quantityReserved)
+                .setInt32("availableToPromise", availableToPromise)
+                .build();
+        return gr;
     }
 }

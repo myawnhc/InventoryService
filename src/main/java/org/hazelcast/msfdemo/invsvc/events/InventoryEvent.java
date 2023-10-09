@@ -21,18 +21,20 @@ import org.hazelcast.msfdemo.invsvc.domain.Inventory;
 import org.hazelcast.msfdemo.invsvc.domain.InventoryKey;
 
 import java.io.Serializable;
+import java.util.function.UnaryOperator;
 
-public abstract class InventoryEvent extends SourcedEvent<Inventory, InventoryKey> implements Serializable {
+public abstract class InventoryEvent extends SourcedEvent<Inventory, InventoryKey>
+        implements UnaryOperator<Inventory> /*,Serializable*/ {
 
-    // Fields common to all InventoryEvents
-    private String itemNumber;
-
-    public String getItemNumber() {
-        return itemNumber;
-    }
-
-    public void setItemNumber(String itemNumber) {
-        this.itemNumber = itemNumber;
-    }
+//    // Fields common to all InventoryEvents
+//    private String itemNumber;
+//
+//    public String getItemNumber() {
+//        return itemNumber;
+//    }
+//
+//    public void setItemNumber(String itemNumber) {
+//        this.itemNumber = itemNumber;
+//    }
 
 }
